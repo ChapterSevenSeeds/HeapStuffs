@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.31)
-project(HeapStuffs C)
+project(HeapStuffs CXX)
 
-set(CMAKE_C_STANDARD 23)
+set(CMAKE_CXX_STANDARD 23)
 
-add_executable(HeapStuffs main.c)
+add_executable(HeapStuffs main.cpp)
