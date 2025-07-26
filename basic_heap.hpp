@@ -1,24 +1,23 @@
 #pragma once
 
-#include <cstdlib>
+#include <cassert>
 #include <cstdint>
 
 class basic_heap {
 public:
-    constexpr static auto MAGIC = 1234567890;
+    constexpr static size_t MIN_ALLOC_SIZE = 8;
 
     class node {
     public:
-        uint32_t magic = MAGIC;
-        bool in_use = false;
-        size_t size = 0;
+        size_t size: 63 = 0;
+        bool in_use: 1 = false;
 
         void *get_data_ptr() {
             return reinterpret_cast<uint8_t *>(this) + sizeof(node);
         }
 
         node *get_next(const basic_heap &heap) {
-            const auto n = reinterpret_cast<node *>(static_cast<uint8_t*>(get_data_ptr()) + size);
+            const auto n = reinterpret_cast<node *>(static_cast<uint8_t *>(get_data_ptr()) + size);
             if (n > heap.get_end()) return nullptr;
             return n;
         }
@@ -41,10 +40,13 @@ public:
     }
 
     explicit basic_heap(const size_t size) {
+        if (size / MIN_ALLOC_SIZE * MIN_ALLOC_SIZE != size) {
+            throw std::runtime_error("Heap size must be divisible my MIN_ALLOC_SIZE");
+        }
+
         root = static_cast<node *>(std::malloc(size + sizeof(node)));
         root->size = size;
         root->in_use = false;
-        root->magic = MAGIC;
         original_size = size;
     }
 
@@ -66,10 +68,27 @@ public:
         std::free(root);
     }
 
+    static node *split_node(node *node_to_split, const size_t size) {
+        auto *current_block_data = node_to_split->get_data_ptr();
+        const auto new_free_node = reinterpret_cast<node *>(
+            static_cast<uint8_t *>(current_block_data) + size);
+
+        // The new free node's size is the difference between the two nodes minus the node struct overhead.
+        new_free_node->size = node_to_split->size - size - sizeof(node);
+        new_free_node->in_use = false;
+
+        node_to_split->size = size;
+        node_to_split->in_use = true;
+
+        return node_to_split;
+    }
+
     [[nodiscard]] virtual void *alloc(const size_t size) const {
+        const auto size_to_alloc = std::max(size, MIN_ALLOC_SIZE);
+
         // Find the first free block that is at least as big as the request.
         auto current_block = root;
-        while (current_block != nullptr && (current_block->size < size || current_block->in_use)) {
+        while (current_block != nullptr && (current_block->size < size_to_alloc || current_block->in_use)) {
             current_block = current_block->get_next(*this);
         }
 
@@ -77,20 +96,8 @@ public:
             return nullptr;
         }
 
-        // If the block size minus the requested size is at least 8 bytes larger than the size of a node, chop off the extra into a new node.
-        if (current_block->size - size >= sizeof(node) + 8) {
-            auto *current_block_data = current_block->get_data_ptr();
-            const auto new_free_node = reinterpret_cast<node *>(static_cast<uint8_t *>(current_block_data) + size);
-
-            // The new free node's size is the difference between the two nodes minus the node struct overhead.
-            new_free_node->size = current_block->size - size - sizeof(node);
-            new_free_node->in_use = false;
-            new_free_node->magic = MAGIC;
-
-            current_block->size = size;
-            current_block->in_use = true;
-
-            return current_block->get_data_ptr();
+        if (current_block->size - size_to_alloc >= sizeof(node)) {
+            return split_node(current_block, size_to_alloc)->get_data_ptr();
         }
 
         current_block->in_use = true;
@@ -109,15 +116,20 @@ public:
 
     [[nodiscard]] double get_fragmentation() const {
         size_t max_free_size = 0;
+        size_t total_free = 0;
         auto current_block = root;
         while (current_block != nullptr) {
-            if (!current_block->in_use && current_block->size > max_free_size) {
-                max_free_size = current_block->size;
+            if (!current_block->in_use) {
+                total_free += current_block->size;
+
+                if (current_block->size > max_free_size) {
+                    max_free_size = current_block->size;
+                }
             }
 
             current_block = current_block->get_next(*this);
         }
 
-        return 1.0 - static_cast<double>(max_free_size) / static_cast<double>(original_size);
+        return 1.0 - static_cast<double>(max_free_size) / static_cast<double>(total_free);
     }
 };

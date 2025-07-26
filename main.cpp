@@ -5,29 +5,28 @@
 
 #include "basic_heap.hpp"
 #include "coalescing_heap.hpp"
-#include "reuse_small_blocks_heap.hpp"
 
 int main() {
     constexpr auto SIZE = 8192 * 128;
     basic_heap basic{SIZE};
     coalescing_heap coalescing{SIZE};
-    reuse_small_blocks_heap reuse_small_blocks{SIZE};
 
-    std::list<void *> basic_ptrs{};
-    std::list<void *> coalescing_ptrs{};
-    std::list<void *> reuse_small_blocks_ptrs{};
+    std::vector<void *> basic_ptrs{};
+    std::vector<void *> coalescing_ptrs{};
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> byte_dist(1, 1024);
+    std::uniform_int_distribution<> byte_dist(1, static_cast<int>(std::sqrt(SIZE)));
     std::uniform_int_distribution<> should_free_dist(1, 5);
+    size_t loop_count = 0;
     while (true) {
+        loop_count++;
+
         const auto bytes_to_allocate = byte_dist(gen);
-        const auto should_free = should_free_dist(gen) > 3;
+        const auto should_free = should_free_dist(gen) > 1;
 
         auto basic_ptr = basic.alloc(bytes_to_allocate);
         auto coalescing_ptr = coalescing.alloc(bytes_to_allocate);
-        auto reuse_small_blocks_ptr = reuse_small_blocks.alloc(bytes_to_allocate);
 
         if (basic_ptr == nullptr) {
             std::cout << "Failed basic allocation" << std::endl;
@@ -39,32 +38,24 @@ int main() {
             break;
         }
 
-        if (reuse_small_blocks_ptr == nullptr) {
-            std::cout << "Failed reuse_small_blocks allocation" << std::endl;
-            break;
-        }
-
         basic_ptrs.push_back(basic_ptr);
         coalescing_ptrs.push_back(coalescing_ptr);
-        reuse_small_blocks_ptrs.push_back(reuse_small_blocks_ptr);
 
         if (should_free && !basic_ptrs.empty()) {
-            basic.free(basic_ptrs.front());
-            basic_ptrs.pop_front();
+            std::uniform_int_distribution<> index_to_free_dist(0, static_cast<int>(basic_ptrs.size() - 1));
+            const auto index_to_free = index_to_free_dist(gen);
+            basic.free(basic_ptrs.at(index_to_free));
+            basic_ptrs.erase(basic_ptrs.begin() + index_to_free);
 
-            coalescing.free(coalescing_ptrs.front());
-            coalescing_ptrs.pop_front();
-
-            reuse_small_blocks.free(reuse_small_blocks_ptrs.front());
-            reuse_small_blocks_ptrs.pop_front();
+            coalescing.free(coalescing_ptrs.at(index_to_free));
+            coalescing_ptrs.erase(coalescing_ptrs.begin() + index_to_free);
         }
     }
+
+    printf("LOOPS: %llu\n", loop_count);
 
     printf("BASIC: Fragmentation %f In use %f\n", basic.get_fragmentation(),
            static_cast<double>(basic.get_used_bytes()) / static_cast<double>(basic.original_size));
     printf("COALESCING: Fragmentation %f In use %f\n", coalescing.get_fragmentation(),
            static_cast<double>(coalescing.get_used_bytes()) / static_cast<double>(coalescing.original_size));
-    printf("REUSE SMALL BLOCKS: Fragmentation %f In use %f\n", reuse_small_blocks.get_fragmentation(),
-           static_cast<double>(reuse_small_blocks.get_used_bytes()) / static_cast<double>(reuse_small_blocks.
-               original_size));
 }
