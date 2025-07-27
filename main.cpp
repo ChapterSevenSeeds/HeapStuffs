@@ -1,19 +1,42 @@
+#include <algorithm>
 #include <cstdio>
 #include <list>
 #include <random>
 #include <iostream>
 
-#include "basic_heap.hpp"
-#include "coalescing_heap.hpp"
+#include "alloc_strategies.hpp"
+#include "heap.hpp"
+#include "free_strategies.hpp"
 
-int main() {
-    constexpr auto SIZE = 8192 * 128;
-    basic_heap basic{SIZE};
-    coalescing_heap coalescing{SIZE};
+constexpr auto SIZE = 8192 * 128;
 
-    std::vector<void *> basic_ptrs{};
-    std::vector<void *> coalescing_ptrs{};
+struct alloc_group {
+    void *ptr;
+    size_t size;
 
+    alloc_group(void *ptr, const size_t size) : ptr(ptr), size(size) {
+    }
+};
+
+struct loop_group {
+    std::vector<alloc_group> allocs{};
+    heap heap_inst;
+
+    template<typename... Args>
+    explicit loop_group(Args... args) : heap_inst(std::forward<Args>(args)...) {
+    }
+
+    [[nodiscard]] double get_efficiency() const {
+        const auto total_bytes_requested = std::ranges::fold_left(allocs, static_cast<size_t>(0),
+                                                                  [](const auto total, const auto current) {
+                                                                      return total + current.size;
+                                                                  });
+        return static_cast<double>(total_bytes_requested) / static_cast<double>(heap_inst.get_used_bytes());
+    }
+};
+
+
+size_t run(std::vector<loop_group> &loop_groups) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> byte_dist(1, static_cast<int>(std::sqrt(SIZE)));
@@ -25,37 +48,53 @@ int main() {
         const auto bytes_to_allocate = byte_dist(gen);
         const auto should_free = should_free_dist(gen) > 1;
 
-        auto basic_ptr = basic.alloc(bytes_to_allocate);
-        auto coalescing_ptr = coalescing.alloc(bytes_to_allocate);
+        for (auto &h: loop_groups) {
+            const auto ptr = h.heap_inst.alloc(bytes_to_allocate);
 
-        if (basic_ptr == nullptr) {
-            std::cout << "Failed basic allocation" << std::endl;
-            break;
-        }
+            if (ptr == nullptr) {
+                std::cout << "Failed allocation on " << h.heap_inst.get_heap_type() << std::endl;
+                return loop_count;
+            }
 
-        if (coalescing_ptr == nullptr) {
-            std::cout << "Failed coalescing allocation" << std::endl;
-            break;
-        }
+            h.allocs.emplace_back(ptr, bytes_to_allocate);
 
-        basic_ptrs.push_back(basic_ptr);
-        coalescing_ptrs.push_back(coalescing_ptr);
-
-        if (should_free && !basic_ptrs.empty()) {
-            std::uniform_int_distribution<> index_to_free_dist(0, static_cast<int>(basic_ptrs.size() - 1));
-            const auto index_to_free = index_to_free_dist(gen);
-            basic.free(basic_ptrs.at(index_to_free));
-            basic_ptrs.erase(basic_ptrs.begin() + index_to_free);
-
-            coalescing.free(coalescing_ptrs.at(index_to_free));
-            coalescing_ptrs.erase(coalescing_ptrs.begin() + index_to_free);
+            if (should_free && !h.allocs.empty()) {
+                std::uniform_int_distribution<> index_to_free_dist(0, static_cast<int>(h.allocs.size() - 1));
+                const auto index_to_free = index_to_free_dist(gen);
+                h.heap_inst.free(h.allocs.at(index_to_free).ptr);
+                h.allocs.erase(h.allocs.begin() + index_to_free);
+            }
         }
     }
+}
+
+int main() {
+    first_fit_split_anything_alloc_strategy first_fit_split_anything_alloc_strategy_inst{};
+    best_fit_split_anything_alloc_strategy best_fit_split_anything_alloc_strategy_inst{};
+    first_fit_split_25_alloc_strategy first_fit_split_25_alloc_strategy_inst{};
+    best_fit_split_25_alloc_strategy best_fit_split_25_alloc_strategy_inst{};
+    simple_free_strategy simple_free_strategy_inst{};
+    coalesce_free_blocks_free_strategy coalesce_free_blocks_free_strategy_inst{};
+
+    std::vector loop_groups = {
+        loop_group{SIZE, &first_fit_split_anything_alloc_strategy_inst, &simple_free_strategy_inst},
+        loop_group{SIZE, &first_fit_split_anything_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
+        loop_group{SIZE, &best_fit_split_anything_alloc_strategy_inst, &simple_free_strategy_inst},
+        loop_group{SIZE, &best_fit_split_anything_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
+        loop_group{SIZE, &first_fit_split_25_alloc_strategy_inst, &simple_free_strategy_inst},
+        loop_group{SIZE, &first_fit_split_25_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
+        loop_group{SIZE, &best_fit_split_25_alloc_strategy_inst, &simple_free_strategy_inst},
+        loop_group{SIZE, &best_fit_split_25_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
+    };
+
+    const auto loop_count = run(loop_groups);
 
     printf("LOOPS: %llu\n", loop_count);
 
-    printf("BASIC: Fragmentation %f In use %f\n", basic.get_fragmentation(),
-           static_cast<double>(basic.get_used_bytes()) / static_cast<double>(basic.original_size));
-    printf("COALESCING: Fragmentation %f In use %f\n", coalescing.get_fragmentation(),
-           static_cast<double>(coalescing.get_used_bytes()) / static_cast<double>(coalescing.original_size));
+    for (auto &h: loop_groups) {
+        printf("**** %s\n\tFragmentation %-10f In use %-10f Efficiency %-10f\n", h.heap_inst.get_heap_type().c_str(),
+               h.heap_inst.get_fragmentation(),
+               static_cast<double>(h.heap_inst.get_used_bytes()) / static_cast<double>(h.heap_inst.original_size),
+               h.get_efficiency());
+    }
 }
