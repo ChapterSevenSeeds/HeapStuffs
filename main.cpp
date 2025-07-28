@@ -73,6 +73,8 @@ int main() {
     best_fit_split_anything_alloc_strategy best_fit_split_anything_alloc_strategy_inst{};
     first_fit_split_25_alloc_strategy first_fit_split_25_alloc_strategy_inst{};
     best_fit_split_25_alloc_strategy best_fit_split_25_alloc_strategy_inst{};
+    first_fit_split_power_of_two_alloc_strategy first_fit_split_power_of_two_alloc_strategy_inst{};
+    best_fit_split_power_of_two_alloc_strategy best_fit_split_power_of_two_alloc_strategy{};
     simple_free_strategy simple_free_strategy_inst{};
     coalesce_free_blocks_free_strategy coalesce_free_blocks_free_strategy_inst{};
 
@@ -85,11 +87,15 @@ int main() {
         loop_group{SIZE, &first_fit_split_25_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
         loop_group{SIZE, &best_fit_split_25_alloc_strategy_inst, &simple_free_strategy_inst},
         loop_group{SIZE, &best_fit_split_25_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
+        loop_group{SIZE, &first_fit_split_power_of_two_alloc_strategy_inst, &simple_free_strategy_inst},
+        loop_group{SIZE, &first_fit_split_power_of_two_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
+        loop_group{SIZE, &best_fit_split_power_of_two_alloc_strategy, &simple_free_strategy_inst},
+        loop_group{SIZE, &best_fit_split_power_of_two_alloc_strategy, &coalesce_free_blocks_free_strategy_inst}
     };
 
     const auto loop_count = run(loop_groups);
 
-    printf("LOOPS: %llu\n", loop_count);
+    printf("LOOPS: %zu\n", loop_count);
 
     for (auto &h: loop_groups) {
         printf("**** %s\n\tFragmentation %-10f In use %-10f Efficiency %-10f\n", h.heap_inst.get_heap_type().c_str(),
