@@ -108,50 +108,18 @@ public:
     }
 };
 
-class first_fit_split_power_of_two_alloc_strategy final : public alloc_strategy {
-public:
-    void *alloc(node *root, const size_t aligned_size) override {
-        size_t resized = aligned_size;
-        if (resized <= 8) {
-            resized = 8; // "8 bytes for 1-8" (I assume the rest is actually powers of 2...)
-        } else if ((resized & (resized - 1)) != 0) {
-            resized |= resized >> 1;
-            resized |= resized >> 2;
-            resized |= resized >> 4;
-            resized |= resized >> 8;
-            resized |= resized >> 16;
-            // repeat lines with respective increment as desired
-        }
-        const auto first_fit = find_first_fit(root, resized);
-
-        if (first_fit == nullptr) {
-            return nullptr;
-        }
-
-        return return_with_split_if_possible(first_fit, resized);
-    }
-};
-
 class best_fit_split_power_of_two_alloc_strategy final : public alloc_strategy {
 public:
     void *alloc(node *root, const size_t aligned_size) override {
-        size_t resized = aligned_size;
-        if (resized <= 8) {
-            resized = 8; // "8 bytes for 1-8" (I assume the rest is actually powers of 2...)
-        } else if ((resized & (resized - 1)) != 0) {
-            resized |= resized >> 1;
-            resized |= resized >> 2;
-            resized |= resized >> 4;
-            resized |= resized >> 8;
-            resized |= resized >> 16;
-            // repeat lines with respective increment as desired
-        }
-        const auto best_fit = find_best_fit(root, resized);
+        const auto resized_log = log2(static_cast<double>(aligned_size));
+        const auto power_of_2_size = static_cast<size_t>(pow(2, ceil(resized_log)));
+
+        const auto best_fit = find_best_fit(root, power_of_2_size);
 
         if (best_fit == nullptr) {
             return nullptr;
         }
 
-        return return_with_split_if_possible(best_fit, resized);
+        return return_with_split_if_possible(best_fit, power_of_2_size);
     }
 };

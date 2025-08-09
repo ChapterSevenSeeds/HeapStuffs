@@ -3,6 +3,7 @@
 #include <list>
 #include <random>
 #include <iostream>
+#include <ranges>
 
 #include "alloc_strategies.hpp"
 #include "heap.hpp"
@@ -21,6 +22,8 @@ struct alloc_group {
 struct loop_group {
     std::vector<alloc_group> allocs{};
     heap heap_inst;
+    bool failed = false;
+    size_t failed_on_iteration = 0;
 
     template<typename... Args>
     explicit loop_group(Args... args) : heap_inst(std::forward<Args>(args)...) {
@@ -36,24 +39,26 @@ struct loop_group {
 };
 
 
-size_t run(std::vector<loop_group> &loop_groups) {
+void run(std::vector<loop_group> &loop_groups) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> byte_dist(1, static_cast<int>(std::sqrt(SIZE)));
     std::uniform_int_distribution<> should_free_dist(1, 5);
     size_t loop_count = 0;
-    while (true) {
+    const auto is_failed_predicate = [](const auto &g) { return !g.failed; };
+    while (std::ranges::count_if(loop_groups, is_failed_predicate) > 0) {
         loop_count++;
 
         const auto bytes_to_allocate = byte_dist(gen);
         const auto should_free = should_free_dist(gen) > 1;
 
-        for (auto &h: loop_groups) {
+        for (auto &h: std::ranges::filter_view(loop_groups, is_failed_predicate)) {
             const auto ptr = h.heap_inst.alloc(bytes_to_allocate);
 
             if (ptr == nullptr) {
-                std::cout << "Failed allocation on " << h.heap_inst.get_heap_type() << std::endl;
-                return loop_count;
+                h.failed = true;
+                h.failed_on_iteration = loop_count;
+                continue;
             }
 
             h.allocs.emplace_back(ptr, bytes_to_allocate);
@@ -73,7 +78,6 @@ int main() {
     best_fit_split_anything_alloc_strategy best_fit_split_anything_alloc_strategy_inst{};
     first_fit_split_25_alloc_strategy first_fit_split_25_alloc_strategy_inst{};
     best_fit_split_25_alloc_strategy best_fit_split_25_alloc_strategy_inst{};
-    first_fit_split_power_of_two_alloc_strategy first_fit_split_power_of_two_alloc_strategy_inst{};
     best_fit_split_power_of_two_alloc_strategy best_fit_split_power_of_two_alloc_strategy{};
     simple_free_strategy simple_free_strategy_inst{};
     coalesce_free_blocks_free_strategy coalesce_free_blocks_free_strategy_inst{};
@@ -87,18 +91,16 @@ int main() {
         loop_group{SIZE, &first_fit_split_25_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
         loop_group{SIZE, &best_fit_split_25_alloc_strategy_inst, &simple_free_strategy_inst},
         loop_group{SIZE, &best_fit_split_25_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
-        loop_group{SIZE, &first_fit_split_power_of_two_alloc_strategy_inst, &simple_free_strategy_inst},
-        loop_group{SIZE, &first_fit_split_power_of_two_alloc_strategy_inst, &coalesce_free_blocks_free_strategy_inst},
         loop_group{SIZE, &best_fit_split_power_of_two_alloc_strategy, &simple_free_strategy_inst},
         loop_group{SIZE, &best_fit_split_power_of_two_alloc_strategy, &coalesce_free_blocks_free_strategy_inst}
     };
 
-    const auto loop_count = run(loop_groups);
-
-    printf("LOOPS: %zu\n", loop_count);
+    run(loop_groups);
 
     for (auto &h: loop_groups) {
-        printf("**** %s\n\tFragmentation %-10f In use %-10f Efficiency %-10f\n", h.heap_inst.get_heap_type().c_str(),
+        printf("**** %s\n\tLoops %zu Fragmentation %-10f In use %-10f Efficiency %-10f\n",
+               h.heap_inst.get_heap_type().c_str(),
+               h.failed_on_iteration,
                h.heap_inst.get_fragmentation(),
                static_cast<double>(h.heap_inst.get_used_bytes()) / static_cast<double>(h.heap_inst.original_size),
                h.get_efficiency());
